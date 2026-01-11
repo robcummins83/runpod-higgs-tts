@@ -87,11 +87,12 @@ def download_audio(url: str, suffix: str = ".wav") -> tuple:
     temp_file.write(audio_bytes)
     temp_file.close()
 
-    # Validate audio can be loaded
+    # Validate audio can be loaded (use librosa since Higgs uses it internally)
     try:
-        waveform, sr = torchaudio.load(temp_file.name)
-        duration = waveform.shape[1] / sr
-        print(f"[AUDIO] Validated: {duration:.1f}s, {sr}Hz, {waveform.shape[0]} channels")
+        import librosa
+        audio_data, sr = librosa.load(temp_file.name, sr=None)
+        duration = len(audio_data) / sr
+        print(f"[AUDIO] Validated: {duration:.1f}s, {sr}Hz, mono")
     except Exception as e:
         os.unlink(temp_file.name)
         raise ValueError(f"Invalid audio file: {e}")
