@@ -4,24 +4,19 @@ Serverless RunPod endpoint for Higgs Audio V2 text-to-speech with voice cloning.
 
 ## Deployment
 
-### 1. Build and Push Docker Image
+### 1. Build Docker Image (Automatic)
 
-```bash
-# Build
-docker build -t runpod-higgs-tts .
+The Docker image is automatically built and pushed to GitHub Container Registry on every push to `main`.
 
-# Tag for Docker Hub (replace with your username)
-docker tag runpod-higgs-tts yourusername/runpod-higgs-tts:latest
+Image: `ghcr.io/robcummins83/runpod-higgs-tts:latest`
 
-# Push
-docker push yourusername/runpod-higgs-tts:latest
-```
+To trigger a manual build, go to Actions → Build and Push Docker Image → Run workflow.
 
 ### 2. Create RunPod Serverless Endpoint
 
 1. Go to [RunPod Serverless](https://www.runpod.io/console/serverless)
 2. Create new endpoint
-3. Use Docker image: `yourusername/runpod-higgs-tts:latest`
+3. Use Docker image: `ghcr.io/robcummins83/runpod-higgs-tts:latest`
 4. **GPU**: RTX A6000 or A100 (24GB+ VRAM required)
 5. **Idle Timeout**: 60 seconds (model takes time to load)
 6. **Max Workers**: 1 (for testing)
