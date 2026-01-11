@@ -197,20 +197,7 @@ def generate_audio(
     ]
 
     # Add voice cloning context if voice sample provided
-    if voice_sample_base64:
-        print(f"[GEN] Adding voice sample for cloning (base64)...")
-        # User message with transcript of what's said in the sample
-        conversation_history.append(
-            Message(role="user", content=VOICE_SAMPLE_TRANSCRIPT)
-        )
-        # Assistant message with the audio sample (using raw_audio for reliability)
-        conversation_history.append(
-            Message(role="assistant", content=AudioContent(
-                audio_url="reference.wav",  # Required field, but raw_audio takes precedence
-                raw_audio=voice_sample_base64
-            ))
-        )
-    elif voice_sample_path:
+    if voice_sample_path:
         print(f"[GEN] Adding voice sample for cloning (path)...")
         # User message with transcript of what's said in the sample
         conversation_history.append(
