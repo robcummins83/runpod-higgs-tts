@@ -19,8 +19,8 @@ RUN git clone https://github.com/boson-ai/higgs-audio.git /app/higgs-audio \
     && pip install -r requirements.txt \
     && pip install -e .
 
-# Install RunPod SDK
-RUN pip install runpod requests
+# Install RunPod SDK and torchcodec (required by torchaudio 2.9+ for audio save)
+RUN pip install runpod requests torchcodec
 
 # Remove flash_attn to avoid CUDA compatibility issues
 # The model will fall back to standard attention
