@@ -1,0 +1,37 @@
+# RunPod Serverless Handler for Higgs Audio V2
+# Based on NVIDIA PyTorch container for CUDA compatibility
+
+FROM nvcr.io/nvidia/pytorch:25.01-py3
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    ffmpeg \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Clone and install Higgs Audio
+RUN git clone https://github.com/boson-ai/higgs-audio.git /app/higgs-audio \
+    && cd /app/higgs-audio \
+    && pip install -r requirements.txt \
+    && pip install -e .
+
+# Install RunPod SDK
+RUN pip install runpod requests
+
+# Pre-download models to bake into image (faster cold starts)
+RUN python -c "from huggingface_hub import snapshot_download; \
+    snapshot_download('bosonai/higgs-audio-v2-generation-3B-base'); \
+    snapshot_download('bosonai/higgs-audio-v2-tokenizer')"
+
+# Copy handler
+COPY handler.py /app/handler.py
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV HF_HOME=/root/.cache/huggingface
+
+# Run the handler
+CMD ["python", "-u", "/app/handler.py"]
