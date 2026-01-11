@@ -20,6 +20,7 @@ try:
     print(f"[DEBUG] PyTorch: {torch.__version__}, CUDA: {torch.cuda.is_available()}", flush=True)
 
     import runpod
+    from runpod.serverless.utils import rp_upload
     print("[DEBUG] RunPod SDK OK", flush=True)
 
     from boson_multimodal.serve.serve_engine import HiggsAudioServeEngine
@@ -181,6 +182,7 @@ def generate_audio(
         word_count = len(chunk.split())
         print(f"[GEN] Chunk {i+1}/{len(chunks)} ({word_count} words)...")
 
+        # Fresh context each chunk - just system + voice sample + current text
         messages = conversation_history + [
             Message(role="user", content=chunk)
         ]
@@ -198,10 +200,6 @@ def generate_audio(
             audio_duration = len(output.audio) / output.sampling_rate
             all_audio.append(torch.from_numpy(output.audio))
             sample_rate = output.sampling_rate
-
-            conversation_history.append(Message(role="user", content=chunk))
-            conversation_history.append(Message(role="assistant", content="[Audio generated]"))
-
             print(f"[GEN] Chunk {i+1} complete: {audio_duration:.1f}s")
         else:
             print(f"[WARN] Chunk {i+1} produced no audio")
@@ -227,7 +225,7 @@ def handler(job):
         - seed: Random seed for reproducibility (optional)
 
     Output:
-        - audio_base64: Base64-encoded WAV audio
+        - audio_url: URL to download generated WAV audio
         - duration: Audio duration in seconds
         - sample_rate: Audio sample rate
         - chunks: Number of chunks processed
@@ -281,9 +279,13 @@ def handler(job):
         file_size_mb = os.path.getsize(temp_output.name) / (1024 * 1024)
         print(f"[JOB] File size: {file_size_mb:.1f} MB")
 
-        # Encode as base64
-        with open(temp_output.name, "rb") as f:
-            audio_base64 = base64.b64encode(f.read()).decode("utf-8")
+        # Upload to RunPod storage (base64 too large for API response)
+        print(f"[JOB] Uploading to storage...")
+        uploaded_url = rp_upload.upload_file_to_bucket(
+            file_name=f"higgs_tts_{job_id}.wav",
+            file_location=temp_output.name
+        )
+        print(f"[JOB] Uploaded: {uploaded_url}")
 
         # Cleanup
         os.unlink(temp_output.name)
@@ -293,7 +295,7 @@ def handler(job):
         print(f"[JOB] Complete: {duration:.1f}s audio")
 
         return {
-            "audio_base64": audio_base64,
+            "audio_url": uploaded_url,
             "duration": duration,
             "sample_rate": sample_rate,
             "chunks": len(chunk_text(text, CONFIG["chunk_max_words"])),
