@@ -142,6 +142,15 @@ def generate_audio(
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
 
+    # Transcript of the voice sample (required for voice cloning)
+    VOICE_SAMPLE_TRANSCRIPT = (
+        "Hi there, my name is Rob and I work in financial modeling. "
+        "Over the years I've helped businesses make better decisions by turning complex numbers into clear, actionable insights. "
+        "Whether you are looking into forecasts, valuations or scenario planning, the key is always to keep things simple and practical. "
+        "Today, I would like to share a few thoughts on how technology is changing the way we approach these challenges. "
+        "Let's dive in."
+    )
+
     # Build system prompt
     system_content = (
         "Generate audio following instruction.\n\n"
@@ -151,13 +160,6 @@ def generate_audio(
         "<|scene_desc_end|>"
     )
 
-    # If we have a voice sample, include it as reference
-    if voice_sample_path:
-        system_content = [
-            system_content,
-            AudioContent(audio_url=voice_sample_path)
-        ]
-
     # Split text into chunks for long content
     chunks = chunk_text(text, CONFIG["chunk_max_words"])
     print(f"[GEN] Processing {len(chunks)} chunk(s)...")
@@ -165,10 +167,22 @@ def generate_audio(
     all_audio = []
     sample_rate = None
 
-    # Process each chunk, maintaining conversation history for consistency
+    # Build conversation history with voice sample for cloning
     conversation_history = [
         Message(role="system", content=system_content)
     ]
+
+    # Add voice cloning context if voice sample provided
+    if voice_sample_path:
+        print(f"[GEN] Adding voice sample for cloning...")
+        # User message with transcript of what's said in the sample
+        conversation_history.append(
+            Message(role="user", content=VOICE_SAMPLE_TRANSCRIPT)
+        )
+        # Assistant message with the audio sample
+        conversation_history.append(
+            Message(role="assistant", content=AudioContent(audio_url=voice_sample_path))
+        )
 
     for i, chunk in enumerate(chunks):
         print(f"[GEN] Chunk {i+1}/{len(chunks)} ({len(chunk.split())} words)...")
