@@ -68,16 +68,38 @@ def get_serve_engine():
     return _serve_engine
 
 
-def download_audio(url: str, suffix: str = ".wav") -> str:
-    """Download audio file from URL to temp file."""
+def download_audio(url: str, suffix: str = ".wav") -> tuple:
+    """
+    Download audio file from URL and return both path and base64.
+    Returns: (temp_file_path, base64_encoded_audio)
+    """
     response = requests.get(url, timeout=60)
     response.raise_for_status()
 
+    audio_bytes = response.content
+
+    # Validate we got actual audio data
+    if len(audio_bytes) < 1000:
+        raise ValueError(f"Audio file too small: {len(audio_bytes)} bytes")
+
+    # Save to temp file for validation
     temp_file = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
-    temp_file.write(response.content)
+    temp_file.write(audio_bytes)
     temp_file.close()
 
-    return temp_file.name
+    # Validate audio can be loaded
+    try:
+        waveform, sr = torchaudio.load(temp_file.name)
+        duration = waveform.shape[1] / sr
+        print(f"[AUDIO] Validated: {duration:.1f}s, {sr}Hz, {waveform.shape[0]} channels")
+    except Exception as e:
+        os.unlink(temp_file.name)
+        raise ValueError(f"Invalid audio file: {e}")
+
+    # Return both path and base64
+    audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
+
+    return temp_file.name, audio_base64
 
 
 def chunk_text(text: str, max_words: int = 80) -> list:
@@ -116,6 +138,7 @@ def chunk_text(text: str, max_words: int = 80) -> list:
 def generate_audio(
     text: str,
     voice_sample_path: str = None,
+    voice_sample_base64: str = None,
     temperature: float = None,
     top_p: float = None,
     top_k: int = None,
@@ -173,8 +196,21 @@ def generate_audio(
     ]
 
     # Add voice cloning context if voice sample provided
-    if voice_sample_path:
-        print(f"[GEN] Adding voice sample for cloning...")
+    if voice_sample_base64:
+        print(f"[GEN] Adding voice sample for cloning (base64)...")
+        # User message with transcript of what's said in the sample
+        conversation_history.append(
+            Message(role="user", content=VOICE_SAMPLE_TRANSCRIPT)
+        )
+        # Assistant message with the audio sample (using raw_audio for reliability)
+        conversation_history.append(
+            Message(role="assistant", content=AudioContent(
+                audio_url="reference.wav",  # Required field, but raw_audio takes precedence
+                raw_audio=voice_sample_base64
+            ))
+        )
+    elif voice_sample_path:
+        print(f"[GEN] Adding voice sample for cloning (path)...")
         # User message with transcript of what's said in the sample
         conversation_history.append(
             Message(role="user", content=VOICE_SAMPLE_TRANSCRIPT)
@@ -205,9 +241,10 @@ def generate_audio(
             all_audio.append(torch.from_numpy(output.audio))
             sample_rate = output.sampling_rate
 
-            # Add to conversation history to maintain context
+            # Add text-only history to maintain context (voice clone is already established)
+            # Don't add AudioContent for generated audio - it would cause loading errors
             conversation_history.append(Message(role="user", content=chunk))
-            conversation_history.append(Message(role="assistant", content=AudioContent(audio_url="generated")))
+            conversation_history.append(Message(role="assistant", content="[Audio generated]"))
 
             print(f"[GEN] Chunk {i+1} complete: {len(output.audio)} samples")
         else:
@@ -258,15 +295,17 @@ def handler(job):
 
         # Download voice sample if provided
         voice_sample_path = None
+        voice_sample_base64 = None
         if audio_url:
             print(f"[JOB] Downloading voice sample...")
-            voice_sample_path = download_audio(audio_url)
+            voice_sample_path, voice_sample_base64 = download_audio(audio_url)
             print(f"[JOB] Voice sample ready: {voice_sample_path}")
 
         # Generate audio
         audio, sample_rate = generate_audio(
             text=text,
             voice_sample_path=voice_sample_path,
+            voice_sample_base64=voice_sample_base64,
             temperature=temperature,
             top_p=top_p,
             top_k=top_k,
