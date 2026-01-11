@@ -13,13 +13,11 @@ try:
     import base64
     import tempfile
     import requests
+    import numpy as np
     print("[DEBUG] Basic imports OK", flush=True)
 
     import torch
     print(f"[DEBUG] PyTorch: {torch.__version__}, CUDA: {torch.cuda.is_available()}", flush=True)
-
-    import torchaudio
-    print(f"[DEBUG] Torchaudio: {torchaudio.__version__}", flush=True)
 
     import runpod
     print("[DEBUG] RunPod SDK OK", flush=True)
@@ -35,15 +33,15 @@ except Exception as e:
     sys.exit(1)
 
 
-# Configuration
+# Configuration - defaults only, all can be overridden via job input
 CONFIG = {
     "model_path": "bosonai/higgs-audio-v2-generation-3B-base",
     "tokenizer_path": "bosonai/higgs-audio-v2-tokenizer",
     "default_temperature": 0.3,
     "default_top_p": 0.95,
     "default_top_k": 50,
-    "max_new_tokens": 2048,
-    "chunk_max_words": 80,  # Words per chunk for long text
+    "default_max_new_tokens": 1024,  # ~40s max per chunk at 25fps
+    "chunk_max_words": 80,
 }
 
 # Global model instance (loaded once, reused across requests)
@@ -68,26 +66,21 @@ def get_serve_engine():
     return _serve_engine
 
 
-def download_audio(url: str, suffix: str = ".wav") -> tuple:
-    """
-    Download audio file from URL and return both path and base64.
-    Returns: (temp_file_path, base64_encoded_audio)
-    """
+def download_audio(url: str, suffix: str = ".wav") -> str:
+    """Download audio file from URL to temp file."""
     response = requests.get(url, timeout=60)
     response.raise_for_status()
 
     audio_bytes = response.content
 
-    # Validate we got actual audio data
     if len(audio_bytes) < 1000:
         raise ValueError(f"Audio file too small: {len(audio_bytes)} bytes")
 
-    # Save to temp file for validation
     temp_file = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
     temp_file.write(audio_bytes)
     temp_file.close()
 
-    # Validate audio can be loaded (use librosa since Higgs uses it internally)
+    # Validate audio can be loaded
     try:
         import librosa
         audio_data, sr = librosa.load(temp_file.name, sr=None)
@@ -97,20 +90,12 @@ def download_audio(url: str, suffix: str = ".wav") -> tuple:
         os.unlink(temp_file.name)
         raise ValueError(f"Invalid audio file: {e}")
 
-    # Return both path and base64
-    audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
-
-    return temp_file.name, audio_base64
+    return temp_file.name
 
 
 def chunk_text(text: str, max_words: int = 80) -> list:
-    """
-    Split text into chunks at sentence boundaries.
-    Keeps chunks under max_words while respecting sentence structure.
-    """
+    """Split text into chunks at sentence boundaries."""
     import re
-
-    # Split into sentences
     sentences = re.split(r'(?<=[.!?])\s+', text.strip())
 
     chunks = []
@@ -119,9 +104,7 @@ def chunk_text(text: str, max_words: int = 80) -> list:
 
     for sentence in sentences:
         sentence_words = len(sentence.split())
-
         if current_word_count + sentence_words > max_words and current_chunk:
-            # Save current chunk and start new one
             chunks.append(' '.join(current_chunk))
             current_chunk = [sentence]
             current_word_count = sentence_words
@@ -129,7 +112,6 @@ def chunk_text(text: str, max_words: int = 80) -> list:
             current_chunk.append(sentence)
             current_word_count += sentence_words
 
-    # Don't forget the last chunk
     if current_chunk:
         chunks.append(' '.join(current_chunk))
 
@@ -139,28 +121,21 @@ def chunk_text(text: str, max_words: int = 80) -> list:
 def generate_audio(
     text: str,
     voice_sample_path: str = None,
-    voice_sample_base64: str = None,
     temperature: float = None,
     top_p: float = None,
     top_k: int = None,
+    max_new_tokens: int = None,
     seed: int = None,
 ) -> tuple:
-    """
-    Generate audio for text, optionally with voice cloning.
-
-    For long text, processes in chunks while maintaining voice consistency
-    by using conversation history.
-
-    Returns: (audio_array, sample_rate)
-    """
+    """Generate audio for text, optionally with voice cloning."""
     serve_engine = get_serve_engine()
 
     # Use defaults if not specified
     temperature = temperature if temperature is not None else CONFIG["default_temperature"]
     top_p = top_p if top_p is not None else CONFIG["default_top_p"]
     top_k = top_k if top_k is not None else CONFIG["default_top_k"]
+    max_new_tokens = max_new_tokens if max_new_tokens is not None else CONFIG["default_max_new_tokens"]
 
-    # Set seed if provided
     if seed is not None:
         torch.manual_seed(seed)
         if torch.cuda.is_available():
@@ -175,7 +150,6 @@ def generate_audio(
         "Let's dive in."
     )
 
-    # Build system prompt
     system_content = (
         "Generate audio following instruction.\n\n"
         "<|scene_desc_start|>\n"
@@ -184,41 +158,36 @@ def generate_audio(
         "<|scene_desc_end|>"
     )
 
-    # Split text into chunks for long content
     chunks = chunk_text(text, CONFIG["chunk_max_words"])
-    print(f"[GEN] Processing {len(chunks)} chunk(s)...")
+    print(f"[GEN] Processing {len(chunks)} chunk(s), max_new_tokens={max_new_tokens}...")
 
     all_audio = []
     sample_rate = None
 
-    # Build conversation history with voice sample for cloning
     conversation_history = [
         Message(role="system", content=system_content)
     ]
 
-    # Add voice cloning context if voice sample provided
     if voice_sample_path:
-        print(f"[GEN] Adding voice sample for cloning (path)...")
-        # User message with transcript of what's said in the sample
+        print(f"[GEN] Adding voice sample for cloning...")
         conversation_history.append(
             Message(role="user", content=VOICE_SAMPLE_TRANSCRIPT)
         )
-        # Assistant message with the audio sample
         conversation_history.append(
             Message(role="assistant", content=AudioContent(audio_url=voice_sample_path))
         )
 
     for i, chunk in enumerate(chunks):
-        print(f"[GEN] Chunk {i+1}/{len(chunks)} ({len(chunk.split())} words)...")
+        word_count = len(chunk.split())
+        print(f"[GEN] Chunk {i+1}/{len(chunks)} ({word_count} words)...")
 
-        # Add user message for this chunk
         messages = conversation_history + [
             Message(role="user", content=chunk)
         ]
 
         output = serve_engine.generate(
             chat_ml_sample=ChatMLSample(messages=messages),
-            max_new_tokens=CONFIG["max_new_tokens"],
+            max_new_tokens=max_new_tokens,
             temperature=temperature,
             top_p=top_p,
             top_k=top_k,
@@ -226,24 +195,21 @@ def generate_audio(
         )
 
         if output.audio is not None and len(output.audio) > 0:
+            audio_duration = len(output.audio) / output.sampling_rate
             all_audio.append(torch.from_numpy(output.audio))
             sample_rate = output.sampling_rate
 
-            # Add text-only history to maintain context (voice clone is already established)
-            # Don't add AudioContent for generated audio - it would cause loading errors
             conversation_history.append(Message(role="user", content=chunk))
             conversation_history.append(Message(role="assistant", content="[Audio generated]"))
 
-            print(f"[GEN] Chunk {i+1} complete: {len(output.audio)} samples")
+            print(f"[GEN] Chunk {i+1} complete: {audio_duration:.1f}s")
         else:
             print(f"[WARN] Chunk {i+1} produced no audio")
 
     if not all_audio:
         raise RuntimeError("No audio generated")
 
-    # Concatenate all chunks
     combined_audio = torch.cat(all_audio, dim=0)
-
     return combined_audio, sample_rate
 
 
@@ -257,6 +223,7 @@ def handler(job):
         - temperature: Sampling temperature (default 0.3)
         - top_p: Top-p sampling (default 0.95)
         - top_k: Top-k sampling (default 50)
+        - max_new_tokens: Max tokens per chunk (default 1024, ~40s audio)
         - seed: Random seed for reproducibility (optional)
 
     Output:
@@ -267,8 +234,8 @@ def handler(job):
     """
     try:
         job_input = job["input"]
+        job_id = job.get("id", "unknown")
 
-        # Extract parameters
         text = job_input.get("prompt")
         if not text:
             return {"error": "No prompt provided"}
@@ -277,50 +244,53 @@ def handler(job):
         temperature = job_input.get("temperature")
         top_p = job_input.get("top_p")
         top_k = job_input.get("top_k")
+        max_new_tokens = job_input.get("max_new_tokens")
         seed = job_input.get("seed")
 
-        print(f"[JOB] Received request: {len(text)} chars, voice_clone={bool(audio_url)}")
+        print(f"[JOB] Received: {len(text)} chars, voice_clone={bool(audio_url)}, max_tokens={max_new_tokens or 'default'}")
 
         # Download voice sample if provided
         voice_sample_path = None
-        voice_sample_base64 = None
         if audio_url:
             print(f"[JOB] Downloading voice sample...")
-            voice_sample_path, voice_sample_base64 = download_audio(audio_url)
+            voice_sample_path = download_audio(audio_url)
             print(f"[JOB] Voice sample ready: {voice_sample_path}")
 
         # Generate audio
         audio, sample_rate = generate_audio(
             text=text,
             voice_sample_path=voice_sample_path,
-            voice_sample_base64=voice_sample_base64,
             temperature=temperature,
             top_p=top_p,
             top_k=top_k,
+            max_new_tokens=max_new_tokens,
             seed=seed,
         )
 
-        # Save to temp file using scipy (torchaudio requires torchcodec)
+        # Calculate duration
+        duration = len(audio) / sample_rate
+        print(f"[JOB] Generated {duration:.1f}s of audio")
+
+        # Save to temp file using scipy
         import scipy.io.wavfile as wavfile
         temp_output = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-        # Convert to numpy and scale to int16 for WAV format
         audio_np = audio.numpy()
-        audio_int16 = (audio_np * 32767).astype("int16")
+        audio_int16 = (audio_np * 32767).astype(np.int16)
         wavfile.write(temp_output.name, sample_rate, audio_int16)
 
-        # Read and encode as base64
+        file_size_mb = os.path.getsize(temp_output.name) / (1024 * 1024)
+        print(f"[JOB] File size: {file_size_mb:.1f} MB")
+
+        # Encode as base64
         with open(temp_output.name, "rb") as f:
             audio_base64 = base64.b64encode(f.read()).decode("utf-8")
 
-        # Calculate duration
-        duration = len(audio) / sample_rate
-
-        # Cleanup temp files
+        # Cleanup
         os.unlink(temp_output.name)
         if voice_sample_path:
             os.unlink(voice_sample_path)
 
-        print(f"[JOB] Complete: {duration:.1f}s audio generated")
+        print(f"[JOB] Complete: {duration:.1f}s audio")
 
         return {
             "audio_base64": audio_base64,
@@ -336,13 +306,8 @@ def handler(job):
         return {"error": str(e)}
 
 
-# Start the serverless handler
 if __name__ == "__main__":
     print("[STARTUP] Higgs Audio V2 RunPod Handler")
     print(f"[STARTUP] Model: {CONFIG['model_path']}")
-
-    # Pre-load model on startup
     get_serve_engine()
-
-    # Start RunPod handler
     runpod.serverless.start({"handler": handler})
