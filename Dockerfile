@@ -1,7 +1,8 @@
 # RunPod Serverless Handler for Higgs Audio V2
 # Based on NVIDIA PyTorch container for CUDA compatibility
 
-FROM nvcr.io/nvidia/pytorch:25.01-py3
+# Use PyTorch container with CUDA 12.4 for RunPod compatibility
+FROM nvcr.io/nvidia/pytorch:24.05-py3
 
 # Set working directory
 WORKDIR /app
