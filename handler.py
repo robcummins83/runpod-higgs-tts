@@ -300,9 +300,13 @@ def handler(job):
             seed=seed,
         )
 
-        # Save to temp file
+        # Save to temp file using scipy (torchaudio requires torchcodec)
+        import scipy.io.wavfile as wavfile
         temp_output = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-        torchaudio.save(temp_output.name, audio.unsqueeze(0), sample_rate)
+        # Convert to numpy and scale to int16 for WAV format
+        audio_np = audio.numpy()
+        audio_int16 = (audio_np * 32767).astype("int16")
+        wavfile.write(temp_output.name, sample_rate, audio_int16)
 
         # Read and encode as base64
         with open(temp_output.name, "rb") as f:
