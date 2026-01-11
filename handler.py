@@ -3,16 +3,36 @@ RunPod Serverless Handler for Higgs Audio V2
 Generates TTS audio with voice cloning support
 """
 
-import os
-import base64
-import tempfile
-import requests
-import torch
-import torchaudio
-import runpod
+print("[DEBUG] Handler starting...", flush=True)
 
-from boson_multimodal.serve.serve_engine import HiggsAudioServeEngine
-from boson_multimodal.data_types import ChatMLSample, Message, AudioContent
+import sys
+print(f"[DEBUG] Python: {sys.version}", flush=True)
+
+try:
+    import os
+    import base64
+    import tempfile
+    import requests
+    print("[DEBUG] Basic imports OK", flush=True)
+
+    import torch
+    print(f"[DEBUG] PyTorch: {torch.__version__}, CUDA: {torch.cuda.is_available()}", flush=True)
+
+    import torchaudio
+    print(f"[DEBUG] Torchaudio: {torchaudio.__version__}", flush=True)
+
+    import runpod
+    print("[DEBUG] RunPod SDK OK", flush=True)
+
+    from boson_multimodal.serve.serve_engine import HiggsAudioServeEngine
+    from boson_multimodal.data_types import ChatMLSample, Message, AudioContent
+    print("[DEBUG] Higgs Audio imports OK", flush=True)
+
+except Exception as e:
+    print(f"[ERROR] Import failed: {e}", flush=True)
+    import traceback
+    traceback.print_exc()
+    sys.exit(1)
 
 
 # Configuration
