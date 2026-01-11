@@ -94,12 +94,14 @@ def download_audio(url: str, suffix: str = ".wav") -> str:
 
 def handler(job):
     """
-    RunPod serverless handler - processes ONE text chunk.
+    RunPod serverless handler - processes ONE text chunk with audio continuity.
     Client handles chunking and concatenation.
 
     Input:
         - prompt: Text to convert to speech (single chunk, required)
         - audio_url: URL to voice sample for cloning (optional)
+        - previous_audio_base64: Base64-encoded audio from previous chunk (optional, for continuity)
+        - previous_text: Text from the previous chunk (optional, for continuity)
         - temperature: Sampling temperature (default 0.3)
         - top_p: Top-p sampling (default 0.95)
         - top_k: Top-k sampling (default 50)
@@ -119,13 +121,16 @@ def handler(job):
             return {"error": "No prompt provided"}
 
         audio_url = job_input.get("audio_url")
+        previous_audio_base64 = job_input.get("previous_audio_base64")
+        previous_text = job_input.get("previous_text")
         temperature = job_input.get("temperature", CONFIG["default_temperature"])
         top_p = job_input.get("top_p", CONFIG["default_top_p"])
         top_k = job_input.get("top_k", CONFIG["default_top_k"])
         max_new_tokens = job_input.get("max_new_tokens", CONFIG["default_max_new_tokens"])
         seed = job_input.get("seed")
 
-        print(f"[JOB] Text: {len(text)} chars, voice_clone={bool(audio_url)}")
+        has_continuity = bool(previous_audio_base64 and previous_text)
+        print(f"[JOB] Text: {len(text)} chars, voice_clone={bool(audio_url)}, continuity={has_continuity}")
 
         serve_engine = get_serve_engine()
 
@@ -162,6 +167,21 @@ def handler(job):
             voice_sample_path = download_audio(audio_url)
             messages.append(Message(role="user", content=VOICE_SAMPLE_TRANSCRIPT))
             messages.append(Message(role="assistant", content=AudioContent(audio_url=voice_sample_path)))
+
+        # Add previous chunk context for continuity (if provided)
+        previous_audio_path = None
+        if previous_audio_base64 and previous_text:
+            print(f"[JOB] Adding continuity context ({len(previous_text)} chars)...")
+            # Decode previous audio and save to temp file
+            previous_audio_bytes = base64.b64decode(previous_audio_base64)
+            previous_audio_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+            previous_audio_file.write(previous_audio_bytes)
+            previous_audio_file.close()
+            previous_audio_path = previous_audio_file.name
+
+            # Add as user text + assistant audio (shows model what was just spoken)
+            messages.append(Message(role="user", content=previous_text))
+            messages.append(Message(role="assistant", content=AudioContent(audio_url=previous_audio_path)))
 
         # Add the text to generate
         messages.append(Message(role="user", content=text))
@@ -203,6 +223,8 @@ def handler(job):
         os.unlink(temp_output.name)
         if voice_sample_path:
             os.unlink(voice_sample_path)
+        if previous_audio_path:
+            os.unlink(previous_audio_path)
 
         print(f"[JOB] Complete")
 
