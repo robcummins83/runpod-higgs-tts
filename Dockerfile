@@ -22,6 +22,10 @@ RUN git clone https://github.com/boson-ai/higgs-audio.git /app/higgs-audio \
 # Install RunPod SDK
 RUN pip install runpod requests
 
+# Remove flash_attn to avoid CUDA compatibility issues
+# The model will fall back to standard attention
+RUN pip uninstall -y flash_attn || true
+
 # Set environment variables BEFORE downloading models
 # so they're cached to the same location used at runtime
 ENV PYTHONUNBUFFERED=1
