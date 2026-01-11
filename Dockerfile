@@ -22,6 +22,11 @@ RUN git clone https://github.com/boson-ai/higgs-audio.git /app/higgs-audio \
 # Install RunPod SDK
 RUN pip install runpod requests
 
+# Set environment variables BEFORE downloading models
+# so they're cached to the same location used at runtime
+ENV PYTHONUNBUFFERED=1
+ENV HF_HOME=/root/.cache/huggingface
+
 # Pre-download models to bake into image (faster cold starts)
 RUN python -c "from huggingface_hub import snapshot_download; \
     snapshot_download('bosonai/higgs-audio-v2-generation-3B-base'); \
@@ -29,10 +34,6 @@ RUN python -c "from huggingface_hub import snapshot_download; \
 
 # Copy handler
 COPY handler.py /app/handler.py
-
-# Set environment variables
-ENV PYTHONUNBUFFERED=1
-ENV HF_HOME=/root/.cache/huggingface
 
 # Run the handler
 CMD ["python", "-u", "/app/handler.py"]
