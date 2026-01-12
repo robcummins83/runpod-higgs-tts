@@ -42,6 +42,14 @@ CONFIG = {
     "default_top_p": 0.95,
     "default_top_k": 50,
     "default_max_new_tokens": 1024,
+    # System prompt for audio generation - can be overridden via API
+    "system_prompt": (
+        "Generate audio following instruction.\n\n"
+        "<|scene_desc_start|>\n"
+        "Audio is recorded from a quiet room with professional microphone. "
+        "The speaker maintains a consistent, engaging tone throughout.\n"
+        "<|scene_desc_end|>"
+    ),
 }
 
 # Global model instance
@@ -128,6 +136,7 @@ def handler(job):
         top_k = job_input.get("top_k", CONFIG["default_top_k"])
         max_new_tokens = job_input.get("max_new_tokens", CONFIG["default_max_new_tokens"])
         seed = job_input.get("seed")
+        system_prompt = job_input.get("system_prompt", CONFIG["system_prompt"])
 
         has_continuity = bool(previous_audio_base64 and previous_text)
         print(f"[JOB] Text: {len(text)} chars, voice_clone={bool(audio_url)}, continuity={has_continuity}")
@@ -149,16 +158,8 @@ def handler(job):
             "Let's dive in."
         )
 
-        system_content = (
-            "Generate audio following instruction.\n\n"
-            "<|scene_desc_start|>\n"
-            "Audio is recorded from a quiet room with professional microphone. "
-            "The speaker maintains a consistent, engaging tone throughout.\n"
-            "<|scene_desc_end|>"
-        )
-
         # Build messages
-        messages = [Message(role="system", content=system_content)]
+        messages = [Message(role="system", content=system_prompt)]
 
         # Add voice cloning context if provided
         voice_sample_path = None
