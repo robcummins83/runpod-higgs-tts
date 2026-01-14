@@ -38,18 +38,6 @@ except Exception as e:
 CONFIG = {
     "model_path": "bosonai/higgs-audio-v2-generation-3B-base",
     "tokenizer_path": "bosonai/higgs-audio-v2-tokenizer",
-    "default_temperature": 0.3,
-    "default_top_p": 0.95,
-    "default_top_k": 50,
-    "default_max_new_tokens": 1024,
-    # System prompt for audio generation - can be overridden via API
-    "system_prompt": (
-        "Generate audio following instruction.\n\n"
-        "<|scene_desc_start|>\n"
-        "Audio is recorded from a quiet room with professional microphone. "
-        "The speaker maintains a consistent, engaging tone throughout.\n"
-        "<|scene_desc_end|>"
-    ),
 }
 
 # Global model instance
@@ -106,14 +94,15 @@ def handler(job):
     Client handles chunking and concatenation.
 
     Input:
-        - prompt: Text to convert to speech (single chunk, required)
+        - prompt: Text to convert to speech (required)
+        - temperature: Sampling temperature (required)
+        - top_p: Top-p sampling (required)
+        - top_k: Top-k sampling (required)
+        - max_new_tokens: Max tokens to generate (required)
+        - system_prompt: Scene description for TTS (required)
         - audio_url: URL to voice sample for cloning (optional)
         - previous_audio_base64: Base64-encoded audio from previous chunk (optional, for continuity)
         - previous_text: Text from the previous chunk (optional, for continuity)
-        - temperature: Sampling temperature (default 0.3)
-        - top_p: Top-p sampling (default 0.95)
-        - top_k: Top-k sampling (default 50)
-        - max_new_tokens: Max tokens (default 1024, ~40s audio)
         - seed: Random seed for reproducibility (optional)
 
     Output:
@@ -131,12 +120,22 @@ def handler(job):
         audio_url = job_input.get("audio_url")
         previous_audio_base64 = job_input.get("previous_audio_base64")
         previous_text = job_input.get("previous_text")
-        temperature = job_input.get("temperature", CONFIG["default_temperature"])
-        top_p = job_input.get("top_p", CONFIG["default_top_p"])
-        top_k = job_input.get("top_k", CONFIG["default_top_k"])
-        max_new_tokens = job_input.get("max_new_tokens", CONFIG["default_max_new_tokens"])
+        temperature = job_input.get("temperature")
+        top_p = job_input.get("top_p")
+        top_k = job_input.get("top_k")
+        max_new_tokens = job_input.get("max_new_tokens")
         seed = job_input.get("seed")
-        system_prompt = job_input.get("system_prompt", CONFIG["system_prompt"])
+        system_prompt = job_input.get("system_prompt")
+
+        # Validate required parameters - no fallback defaults
+        missing = []
+        if temperature is None: missing.append("temperature")
+        if top_p is None: missing.append("top_p")
+        if top_k is None: missing.append("top_k")
+        if max_new_tokens is None: missing.append("max_new_tokens")
+        if system_prompt is None: missing.append("system_prompt")
+        if missing:
+            return {"error": f"Missing required parameters: {', '.join(missing)}"}
 
         has_continuity = bool(previous_audio_base64 and previous_text)
         print(f"[JOB] Text: {len(text)} chars, voice_clone={bool(audio_url)}, continuity={has_continuity}")
